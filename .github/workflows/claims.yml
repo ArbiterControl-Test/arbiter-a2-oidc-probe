@@ -1,0 +1,36 @@
+# A2 · ARB-440 · PLAN-291-R2 Q1: print the decoded OIDC claims of a pull_request_target job that is not inside a
+# reusable workflow. Probe-only audience; the token is masked and never printed. product-3 (A2)
+name: A2 OIDC claims probe
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  claims:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Print the token's decoded claims (never the token)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/probe"
+          mkdir -p "$work"
+          printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" > "$work/h"
+          curl -fsS --max-time 30 -G --data-urlencode "audience=arbiter-a2-oidc-probe" -H @"$work/h" -o "$work/t.json" --url "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          tok="$(jq -r .value "$work/t.json")"
+          echo "::add-mask::$tok"
+          rm -f "$work/h" "$work/t.json"
+          printf '%s' "$tok" | python3 -c '
+          import sys, json, base64
+          p = sys.stdin.read().split(".")[1]
+          p += "=" * (-len(p) % 4)
+          c = json.loads(base64.urlsafe_b64decode(p))
+          keep = ["job_workflow_ref", "job_workflow_sha", "workflow_ref", "workflow_sha", "ref", "sha", "event_name", "base_ref", "head_ref", "repository", "runner_environment", "aud"]
+          print("A2_PROBE_CLAIMS " + json.dumps({k: c.get(k) for k in keep}, sort_keys=True))
+          '
